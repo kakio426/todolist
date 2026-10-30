@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, ArrowUpDown } from 'lucide-react';
+import { Search, ArrowUpDown, Database, HardDrive } from 'lucide-react';
 import { Category, SortOption } from '../types/todo';
 import { SmartView } from './Sidebar';
 import { formatKoreanDate } from '../utils/date';
@@ -12,6 +12,7 @@ interface MainHeaderProps {
   sortBy: SortOption;
   onSortChange: (sort: SortOption) => void;
   itemCount: number;
+  isDbConnected: boolean;
 }
 
 export const MainHeader: React.FC<MainHeaderProps> = ({
@@ -22,6 +23,7 @@ export const MainHeader: React.FC<MainHeaderProps> = ({
   sortBy,
   onSortChange,
   itemCount,
+  isDbConnected,
 }) => {
   const getViewTitle = () => {
     if (selectedCategory !== 'all') {
@@ -52,6 +54,17 @@ export const MainHeader: React.FC<MainHeaderProps> = ({
             <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-semibold">
               {itemCount}개
             </span>
+            {isDbConnected ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                <Database className="w-3 h-3" />
+                <span>Supabase 클라우드</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                <HardDrive className="w-3 h-3" />
+                <span>로컬 저장소</span>
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-400 mt-1">{formatKoreanDate()}</p>
         </div>

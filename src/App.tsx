@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Sidebar, SmartView } from './components/Sidebar';
 import { MainHeader } from './components/MainHeader';
 import { TodoInput } from './components/TodoInput';
@@ -6,6 +6,7 @@ import { TodoList } from './components/TodoList';
 import { BackupModal } from './components/BackupModal';
 import { Todo, Priority, Category, SortOption } from './types/todo';
 import { INITIAL_TODOS } from './constants/initialData';
+import { todoService } from './services/todoService';
 
 const STORAGE_KEY = 'minimal_todo_data_v1';
 const THEME_KEY = 'todo_theme_mode';
@@ -39,6 +40,31 @@ export default function App() {
     return INITIAL_TODOS;
   });
 
+  const isDbConnected = todoService.isConfigured();
+
+  // Supabase DB 초기 데이터 동기화
+  const loadDbTodos = useCallback(async () => {
+    if (!isDbConnected) return;
+    try {
+      const dbTodos = await todoService.fetchTodos();
+      if (dbTodos.length > 0) {
+        setTodos(dbTodos);
+      } else {
+        // DB가 비어있으면 초기 데이터를 DB에 자동 업로드
+        for (const todo of INITIAL_TODOS) {
+          await todoService.addTodo(todo);
+        }
+        setTodos(INITIAL_TODOS);
+      }
+    } catch (err) {
+      console.warn('Supabase fetch failed, fallback to local storage:', err);
+    }
+  }, [isDbConnected]);
+
+  useEffect(() => {
+    loadDbTodos();
+  }, [loadDbTodos]);
+
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
   }, [todos]);
@@ -53,7 +79,7 @@ export default function App() {
   const [isBackupOpen, setIsBackupOpen] = useState(false);
 
   // 투두 추가 (선택된 카테고리가 있다면 기본 카테고리로 적용 가능)
-  const handleAddTodo = (title: string, priority: Priority, category: Category, dueDate?: string) => {
+  const handleAddTodo = async (title: string, priority: Priority, category: Category, dueDate?: string) => {
     const defaultCat = selectedCategory !== 'all' ? selectedCategory : category;
     const newTodo: Todo = {
       id: `todo-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
@@ -65,41 +91,79 @@ export default function App() {
       createdAt: Date.now(),
     };
     setTodos((prev) => [newTodo, ...prev]);
+
+    if (isDbConnected) {
+      try {
+        await todoService.addTodo(newTodo);
+      } catch (err) {
+        console.error('DB insert error:', err);
+      }
+    }
   };
 
   // 완료 여부 토글
-  const handleToggle = (id: string) => {
-    setTodos((prev) =>
-      prev.map((todo) => {
-        if (todo.id === id) {
-          const nextCompleted = !todo.completed;
-          return {
-            ...todo,
-            completed: nextCompleted,
-            completedAt: nextCompleted ? Date.now() : undefined,
-          };
-        }
-        return todo;
-      })
-    );
+  const handleToggle = async (id: string) => {
+    const target = todos.find((t) => t.id === id);
+    if (!target) return;
+
+    const nextCompleted = !target.completed;
+    const updated: Todo = {
+      ...target,
+      completed: nextCompleted,
+      completedAt: nextCompleted ? Date.now() : undefined,
+    };
+
+    setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)));
+
+    if (isDbConnected) {
+      try {
+        await todoService.updateTodo(updated);
+      } catch (err) {
+        console.error('DB update error:', err);
+      }
+    }
   };
 
   // 삭제
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     setTodos((prev) => prev.filter((todo) => todo.id !== id));
+    if (isDbConnected) {
+      try {
+        await todoService.deleteTodo(id);
+      } catch (err) {
+        console.error('DB delete error:', err);
+      }
+    }
   };
 
   // 제목 수정
-  const handleEdit = (id: string, newTitle: string) => {
-    setTodos((prev) =>
-      prev.map((todo) => (todo.id === id ? { ...todo, title: newTitle } : todo))
-    );
+  const handleEdit = async (id: string, newTitle: string) => {
+    const target = todos.find((t) => t.id === id);
+    if (!target) return;
+
+    const updated = { ...target, title: newTitle };
+    setTodos((prev) => prev.map((todo) => (todo.id === id ? updated : todo)));
+
+    if (isDbConnected) {
+      try {
+        await todoService.updateTodo(updated);
+      } catch (err) {
+        console.error('DB update error:', err);
+      }
+    }
   };
 
   // 완료된 항목 일괄 삭제
-  const handleClearCompleted = () => {
+  const handleClearCompleted = async () => {
     if (window.confirm('완료된 모든 할 일을 목록에서 삭제하시겠습니까?')) {
       setTodos((prev) => prev.filter((todo) => !todo.completed));
+      if (isDbConnected) {
+        try {
+          await todoService.clearCompleted();
+        } catch (err) {
+          console.error('DB clear completed error:', err);
+        }
+      }
     }
   };
 
@@ -192,6 +256,7 @@ export default function App() {
             sortBy={sortBy}
             onSortChange={setSortBy}
             itemCount={filteredAndSortedTodos.length}
+            isDbConnected={isDbConnected}
           />
 
           {/* 할 일 빠른 추가 입력창 */}
