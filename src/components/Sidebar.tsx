@@ -10,8 +10,11 @@ import {
   Sun,
   Download,
   RefreshCw,
+  LogOut,
+  User as UserIcon,
 } from 'lucide-react';
 import { Category, Todo } from '../types/todo';
+import { User } from '@supabase/supabase-js';
 
 export type SmartView = 'all' | 'today' | 'important' | 'completed';
 
@@ -25,6 +28,8 @@ interface SidebarProps {
   onToggleDarkMode: () => void;
   onOpenBackup: () => void;
   onResetData: () => void;
+  user: User | null;
+  onSignOut: () => void;
 }
 
 const CATEGORIES: Category[] = ['개인', '업무', '공부', '건강', '기타'];
@@ -39,6 +44,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleDarkMode,
   onOpenBackup,
   onResetData,
+  user,
+  onSignOut,
 }) => {
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -201,8 +208,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* 3. 하단 진척도 & 설정 도구 */}
+      {/* 3. 하단 진척도 & 사용자 & 설정 도구 */}
       <div className="p-3.5 border-t border-slate-100 dark:border-slate-800 space-y-3 bg-slate-50/50 dark:bg-slate-900/50">
+        {/* 사용자 정보 및 로그아웃 버튼 */}
+        {user && (
+          <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/60 shadow-sm text-xs">
+            <div className="flex items-center gap-2 min-w-0 pr-1">
+              <div className="w-6 h-6 rounded-lg bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                <UserIcon className="w-3.5 h-3.5" />
+              </div>
+              <span className="truncate font-medium text-slate-700 dark:text-slate-300 text-[11px]" title={user.email}>
+                {user.email}
+              </span>
+            </div>
+            <button
+              onClick={onSignOut}
+              title="로그아웃"
+              className="p-1 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* 미니 진척도 바 */}
         <div className="bg-white dark:bg-slate-800/80 rounded-xl p-3 border border-slate-200/80 dark:border-slate-700/60 shadow-sm">
           <div className="flex items-center justify-between mb-1.5 text-xs">

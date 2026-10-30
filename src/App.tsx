@@ -4,11 +4,14 @@ import { MainHeader } from './components/MainHeader';
 import { TodoInput } from './components/TodoInput';
 import { TodoList } from './components/TodoList';
 import { BackupModal } from './components/BackupModal';
+import { AuthScreen } from './components/AuthScreen';
 import { Todo, Priority, Category, SortOption } from './types/todo';
-import { INITIAL_TODOS } from './constants/initialData';
 import { todoService } from './services/todoService';
+import { authService } from './services/authService';
+import { User } from '@supabase/supabase-js';
+import { Loader2 } from 'lucide-react';
 
-const STORAGE_KEY = 'minimal_todo_data_v1';
+const STORAGE_KEY_PREFIX = 'user_todo_data_';
 const THEME_KEY = 'todo_theme_mode';
 
 export default function App() {
@@ -29,45 +32,95 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // 투두 리스트 데이터
-  const [todos, setTodos] = useState<Todo[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error('Failed to parse saved todos', e);
-    }
-    return INITIAL_TODOS;
-  });
+  // 인증 사용자 상태
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
+  // 투두 리스트 데이터
+  const [todos, setTodos] = useState<Todo[]>([]);
   const isDbConnected = todoService.isConfigured();
 
-  // Supabase DB 초기 데이터 동기화
-  const loadDbTodos = useCallback(async () => {
-    if (!isDbConnected) return;
-    try {
-      const dbTodos = await todoService.fetchTodos();
-      if (dbTodos.length > 0) {
-        setTodos(dbTodos);
-      } else {
-        // DB가 비어있으면 초기 데이터를 DB에 자동 업로드
-        for (const todo of INITIAL_TODOS) {
-          await todoService.addTodo(todo);
+  // 사용자별 localStorage 키
+  const userStorageKey = useMemo(() => {
+    return user ? `${STORAGE_KEY_PREFIX}${user.id}` : null;
+  }, [user]);
+
+  // 초기 인증 세션 확인 및 구독
+  useEffect(() => {
+    let isMounted = true;
+
+    async function checkAuth() {
+      try {
+        const currentUser = await authService.getCurrentUser();
+        if (isMounted) {
+          setUser(currentUser);
         }
-        setTodos(INITIAL_TODOS);
+      } catch (err) {
+        console.error('Auth check error:', err);
+      } finally {
+        if (isMounted) {
+          setAuthLoading(false);
+        }
       }
-    } catch (err) {
-      console.warn('Supabase fetch failed, fallback to local storage:', err);
     }
-  }, [isDbConnected]);
+
+    checkAuth();
+
+    const { unsubscribe } = authService.onAuthStateChange((newUser) => {
+      setUser(newUser);
+      setAuthLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  // 사용자 로그인 시 투두 목록 로드
+  const loadTodos = useCallback(async () => {
+    if (!user) {
+      setTodos([]);
+      return;
+    }
+
+    if (isDbConnected) {
+      try {
+        const dbTodos = await todoService.fetchTodos();
+        setTodos(dbTodos);
+        return;
+      } catch (err) {
+        console.warn('Supabase fetch failed, fallback to local storage:', err);
+      }
+    }
+
+    // 로컬 스토리지 Fallback (사용자별)
+    if (userStorageKey) {
+      try {
+        const saved = localStorage.getItem(userStorageKey);
+        if (saved) {
+          setTodos(JSON.parse(saved));
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to parse saved todos', e);
+      }
+    }
+
+    // 신규 사용자의 경우 초기 비어있는 리스트
+    setTodos([]);
+  }, [user, isDbConnected, userStorageKey]);
 
   useEffect(() => {
-    loadDbTodos();
-  }, [loadDbTodos]);
+    loadTodos();
+  }, [loadTodos]);
 
+  // 투두 변경 시 사용자별 로컬 스토리지에 캐시
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
-  }, [todos]);
+    if (userStorageKey && todos.length >= 0) {
+      localStorage.setItem(userStorageKey, JSON.stringify(todos));
+    }
+  }, [todos, userStorageKey]);
 
   // 사이드바 네비게이션 상태
   const [currentView, setCurrentView] = useState<SmartView>('all');
@@ -78,11 +131,23 @@ export default function App() {
   // 백업 모달
   const [isBackupOpen, setIsBackupOpen] = useState(false);
 
-  // 투두 추가 (선택된 카테고리가 있다면 기본 카테고리로 적용 가능)
+  // 로그아웃 처리
+  const handleSignOut = async () => {
+    if (window.confirm('로그아웃 하시겠습니까?')) {
+      await authService.signOut();
+      setUser(null);
+      setTodos([]);
+    }
+  };
+
+  // 투두 추가 (로그인한 user_id 전달)
   const handleAddTodo = async (title: string, priority: Priority, category: Category, dueDate?: string) => {
+    if (!user) return;
+
     const defaultCat = selectedCategory !== 'all' ? selectedCategory : category;
     const newTodo: Todo = {
       id: `todo-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      userId: user.id,
       title,
       completed: false,
       priority,
@@ -90,11 +155,12 @@ export default function App() {
       dueDate,
       createdAt: Date.now(),
     };
+
     setTodos((prev) => [newTodo, ...prev]);
 
     if (isDbConnected) {
       try {
-        await todoService.addTodo(newTodo);
+        await todoService.addTodo(newTodo, user.id);
       } catch (err) {
         console.error('DB insert error:', err);
       }
@@ -167,12 +233,10 @@ export default function App() {
     }
   };
 
-  // 기본 샘플 데이터 초기화
+  // 데이터 초기화
   const handleResetData = () => {
-    if (window.confirm('초기 샘플 데이터로 되돌리시겠습니까? 현재 데이터가 덮어씌워집니다.')) {
-      setTodos(INITIAL_TODOS);
-      setCurrentView('all');
-      setSelectedCategory('all');
+    if (window.confirm('현재 사용자의 할 일 목록을 비우시겠습니까?')) {
+      setTodos([]);
     }
   };
 
@@ -226,9 +290,30 @@ export default function App() {
       });
   }, [todos, currentView, selectedCategory, searchQuery, sortBy, todayStr]);
 
-  const completedInView = useMemo(() => filteredAndSortedTodos.filter((t) => t.completed).length, [filteredAndSortedTodos]);
-  const activeInView = useMemo(() => filteredAndSortedTodos.filter((t) => !t.completed).length, [filteredAndSortedTodos]);
+  const completedInView = useMemo(
+    () => filteredAndSortedTodos.filter((t) => t.completed).length,
+    [filteredAndSortedTodos]
+  );
+  const activeInView = useMemo(
+    () => filteredAndSortedTodos.filter((t) => !t.completed).length,
+    [filteredAndSortedTodos]
+  );
 
+  // 1. 초기 세션 확인 중 로딩 화면
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+      </div>
+    );
+  }
+
+  // 2. 로그인되지 않은 경우 -> 로그인/회원가입 화면으로 전환
+  if (!user) {
+    return <AuthScreen onAuthSuccess={() => loadTodos()} />;
+  }
+
+  // 3. 로그인된 사용자 -> 메인 대시보드 및 할 일 목록 표시
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors">
       {/* 💻 좌측 고정 사이드바 */}
@@ -242,6 +327,8 @@ export default function App() {
         onToggleDarkMode={() => setDarkMode((prev) => !prev)}
         onOpenBackup={() => setIsBackupOpen(true)}
         onResetData={handleResetData}
+        user={user}
+        onSignOut={handleSignOut}
       />
 
       {/* 🖥️ 우측 메인 작업 영역 */}

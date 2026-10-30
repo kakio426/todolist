@@ -21,6 +21,7 @@ export const todoService = {
 
     return (data || []).map((row: any) => ({
       id: row.id,
+      userId: row.user_id,
       title: row.title,
       completed: row.completed,
       priority: row.priority,
@@ -31,10 +32,10 @@ export const todoService = {
     }));
   },
 
-  async addTodo(todo: Todo): Promise<void> {
+  async addTodo(todo: Todo, userId?: string): Promise<void> {
     if (!this.isConfigured() || !supabase) return;
 
-    const { error } = await supabase.from('todos').insert({
+    const payload: any = {
       id: todo.id,
       title: todo.title,
       completed: todo.completed,
@@ -43,7 +44,13 @@ export const todoService = {
       due_date: todo.dueDate || null,
       created_at: todo.createdAt,
       completed_at: todo.completedAt || null,
-    });
+    };
+
+    if (userId) {
+      payload.user_id = userId;
+    }
+
+    const { error } = await supabase.from('todos').insert(payload);
 
     if (error) {
       console.error('Error inserting todo:', error);
@@ -94,4 +101,3 @@ export const todoService = {
     }
   },
 };
-
